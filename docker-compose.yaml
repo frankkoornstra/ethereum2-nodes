@@ -1,0 +1,82 @@
+version: '3.7'
+
+services:
+  beacon:
+    image: gcr.io/prysmaticlabs/prysm/beacon-chain:latest
+    container_name: beacon
+    ports:
+      - 3000:3000
+      - 4000:4000
+      - 13000:13000
+      - 12000:12000/udp
+    volumes:
+      - ./var/beacon:/data
+      - ./secrets/tls:/secrets/tls:ro
+    command: --datadir=/data --tls-cert /secrets/tls/server.crt --tls-key /secrets/tls/server.key --rpc-host 0.0.0.0
+    restart: always
+
+  validator-1:
+    image: gcr.io/prysmaticlabs/prysm/validator:latest
+    container_name: validator-1
+    volumes:
+      - ./var/validator-1:/data
+      - ./secrets/tls:/secrets/tls:ro
+      - ./secrets/keystore-1:/secrets/keystore-1
+      - ./secrets/keystore-1.json:/secrets/keystore-1.json
+    command: --datadir=/data --beacon-rpc-provider beacon:4000 --keymanager keystore --keymanageropts /secrets/keystore-1.json --keystore-path /secrets/keystore-1 --tls-cert /secrets/tls/server.crt
+    depends_on:
+      - beacon
+    restart: always
+
+  validator-2:
+    image: gcr.io/prysmaticlabs/prysm/validator:latest
+    container_name: validator-2
+    volumes:
+      - ./var/validator-2:/data
+      - ./secrets/tls/server.crt:/secrets/tls/server.crt:ro
+      - ./secrets/keystore-2:/secrets/keystore-2
+      - ./secrets/keystore-2.json:/secrets/keystore-2.json
+    command: --datadir=/data --beacon-rpc-provider beacon:4000 --keymanager keystore --keymanageropts /secrets/keystore-2.json --keystore-path /secrets/keystore-2 --tls-cert /secrets/tls/server.crt
+    depends_on:
+      - beacon
+    restart: always
+
+  influxdb:
+    image: influxdb:1.8.0
+    container_name: influxdb
+    environment:
+      INFLUXDB_DB: cadvisor
+      INFLUXDB_USER: cadvisor
+      INFLUXDB_USER_PASSWORD: secret
+      INFLUXDB_ADMIN_USER: admin
+      INFLUXDB_ADMIN_PASSWORD: admin
+
+  cadvisor:
+    image: google/cadvisor:latest
+    container_name: cadvisor
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    command: -storage_driver=influxdb -storage_driver_host=influxdb:8086 -storage_driver_db=cadvisor -storage_driver_user=cadvisor -storage_driver_password=secret
+    depends_on:
+      - influxdb
+
+  grafana:
+    image: grafana/grafana:7.0.3
+    container_name: grafana
+    user: "${UID-0}"
+    ports:
+      - 3001:3000
+    volumes:
+      - ./var/grafana:/var/lib/grafana
+      - ./grafana-provisioning:/provisioning
+    environment:
+      GF_PATHS_PROVISIONING: /provisioning
+      GF_ALERTING_ENABLED: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+    depends_on:
+      - influxdb
+      - cadvisor
+
